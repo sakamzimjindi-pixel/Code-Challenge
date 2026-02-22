@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-Validate H3 resolution=8 hex polygons from city-hex-polygons-8-10.geojson (S3 Select),
-against a dedicated 8-only GeoJSON, and score schema conformance (hex_schema.json).
+Read H3 resolution 8 hex polygons from city-hex-polygons-8-10.geojson
+using AWS S3 Select, validate against city-hex-polygons-8.geojson,
+and compute a schema conformance score based on hex_schema.json.
 
-Improvements:
-  - Dataclass config + argparse overrides
-  - Reusable S3 Select helper (with retries, optional compression)
-  - Optional S3 Select for validation file (to avoid large downloads)
-  - Extra content metrics (missing, extra, duplicates)
-  - More granular schema scoring (per-field presence/type/constraints with metrics JSON)
-  - Safer normalization and sanity checks
+Major steps:
+  1. S3 Select: stream only resolution = 8 features from the 8–10 file.
+  2. Validation A (content): compare against the dedicated 8-only file.
+  3. Validation B (schema): compute a conformance score using hex_schema.json.
+  4. Log timings and metrics; fail if thresholds are exceeded.
+
+This is designed to:
+  - Minimise data transferred from S3 (filter on the server via S3 Select).
+  - Avoid loading unnecessary resolutions (9, 10) client-side.
+  - Provide explicit, quantitative validation of both content and schema.
 """
 
 from __future__ import annotations
@@ -36,14 +40,14 @@ import pandas as pd
 @dataclass
 class AppConfig:
     # S3 location of the 8–10 GeoJSON
-    bucket_8_10: str = "your-bucket-name"
-    key_8_10: str = "path/to/city-hex-polygons-8-10.geojson"
+    bucket_8_10: str = "s3://cct-ds-code-challenge-input-data/"
+    key_8_10: str = "city-hex-polygons-8-10.geojson"
 
     # Validation 8-only GeoJSON. You can use S3 (get_object), S3 Select, or local.
     s3_validation: bool = True
     validation_use_select: bool = False  # if True, use S3 Select on the 8-only file too
-    bucket_8: str = "your-bucket-name"
-    key_8: str = "path/to/city-hex-polygons-8.geojson"
+    bucket_8: str = "s3://cct-ds-code-challenge-input-data/"
+    key_8: str = "city-hex-polygons-8.geojson"
     local_8_path: str = "city-hex-polygons-8.geojson"  # used if s3_validation == False
 
     # Schema config
@@ -78,11 +82,6 @@ class AppConfig:
 
 CFG = AppConfig()
 
-
-# -------------------------------------------------------------------
-# Logging & timing
-# -------------------------------------------------------------------
-
 def setup_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -104,10 +103,6 @@ def timed_step(name: str):
         elapsed = time.time() - start
         logging.info(f"[END]   {name} (took {elapsed:.2f} seconds)")
 
-
-# -------------------------------------------------------------------
-# Helpers
-# -------------------------------------------------------------------
 
 def _infer_compression_from_key(key: str, cfg_value: str) -> Optional[str]:
     v = (cfg_value or "none").lower()
