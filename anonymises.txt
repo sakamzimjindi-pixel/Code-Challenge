@@ -1,0 +1,19 @@
+
+This pipeline aims to retain analytical value for environmental–service request analysis while materially reducing re‑identification risk.
+
+Spatial anonymisation. Raw latitude/longitude coordinates are converted to H3 indices at resolution 8 and then removed. H3 resolution 8 tiles have a typical diameter of roughly 500–800 m, so any individual request can only be located to within approximately that distance. 
+This is coarse enough to obscure specific dwellings while still allowing spatial analysis at neighbourhood/block scale, including aggregation by location cell and correlation with wind direction or speed.
+
+Temporal anonymisation. Exact notification timestamps are rounded down to 6‑hour bins, and the precise timestamp column is dropped. This ensures that an adversary cannot use exact timing (e.g., “I logged a complaint at 03:17 on 2020‑08‑12”) to re‑identify a record. 
+Six hours are sufficient granularity to retain diurnal pattern analysis (morning vs. afternoon vs. night) while breaking linkability to real‑world events at fine temporal resolution.
+
+Direct identifiers and high‑risk quasi‑identifiers. The script searches for and removes columns whose names suggest they might contain direct identifiers or likely quasi‑identifiers (names, phone numbers, email addresses, detailed addresses, account numbers, 
+identity numbers, etc.). These are written to a separate table keyed by request_id for manual review and redaction. This ensures that downstream analytical datasets do not contain obvious personal data, yet nothing is irreversibly destroyed if specific 
+attributes need to be recovered under appropriate governance.
+
+k‑anonymity step. Even after coarsening space and time, rare combinations of location tile and 6‑hour bin may still uniquely identify a resident (e.g., a single complaint in a small area during a specific time window). To address this, the script enforces 
+a simple k‑anonymity threshold of k = 2 at the (H3, 6‑hour) level: any group with fewer than two records is excluded from the released anonymised dataset and written to a separate “high‑risk” file for human review. Analysts therefore work only with groups 
+where at least two complaints share the same coarse spatial–temporal cell.
+
+Residual risk. These measures do not provide a formal differential privacy guarantee, but, combined, they substantially reduce identifiability: precise coordinates and times are removed, obvious identifiers are excluded, and uniquely identifying spatial–temporal combinations
+are quarantined. This level of anonymisation is appropriate for exploratory spatial–temporal analyses of service requests and environmental conditions, while preserving a channel for manual, case‑by‑case handling of edge cases
